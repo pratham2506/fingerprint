@@ -134,6 +134,8 @@ def save_fingerprint_image(username_entry, password_entry, droneid_entry, piloti
         fingerprint_image_path = get_fingerprint_photo(username)
         
         send_fingerprint_to_api(username, password, droneid, pilotid, address, fingerprint_image_path)
+        if os.path.exists(f"{username}_fingerprint.png"):
+                os.remove(f"{username}_fingerprint.png")
     except Exception as e:
         messagebox.showerror("Error", f"Failed to save fingerprint image: {str(e)}")
 
