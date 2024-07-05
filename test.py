@@ -1,3 +1,5 @@
+import os
+import json
 import numpy as np
 from matplotlib import pyplot as plt
 import serial
@@ -5,6 +7,8 @@ import requests
 import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
+import base64
+from io import BytesIO
 import adafruit_fingerprint
 
 uart = serial.Serial("COM4", baudrate=57600, timeout=1)
@@ -54,8 +58,30 @@ def send_fingerprint_to_api(username, password, droneid, pilotid, address, finge
             messagebox.showinfo("Success", "Fingerprint image and data saved successfully!")
         else:
             messagebox.showerror("Error", f"Failed to save fingerprint image and data: {response_data['error']}")
+            
+        # Check if there's an image URL in the response
+        # if 'image_url' in response_data:
+        #     download_image(response_data['image_url'], username)
+            
     except Exception as e:
         messagebox.showerror("Error", f"Failed to connect to API: {str(e)}")
+
+# Function to save Base64 encoded image
+def save_base64_image(base64_string, username):
+    try:
+        # Decode Base64 string to bytes
+        image_data = base64.b64decode(base64_string)
+        
+        # Create PIL Image from bytes
+        image = Image.open(BytesIO(image_data))
+        
+        # Save image locally
+        image_filename = f"{username}_downloaded_image.png"
+        image.save(image_filename)
+        print(f"Fingerprint image saved as {image_filename}")
+        
+    except Exception as e:
+        print(f"Error saving fingerprint image: {str(e)}")
 
 # Function to handle user sign-in
 def user_signin(username_entry, password_entry):
@@ -72,9 +98,24 @@ def user_signin(username_entry, password_entry):
     try:
         response = requests.post(api_url, json=data)
         response_data = response.json()
-        print(f"API Response: {response_data}")  # Debugging print
+        # print(f"API Response: {response_data}")  # Debugging print
         if response.status_code == 200:
             messagebox.showinfo("Success", "Signin successful!")
+            
+            # Check if there's a fingerprint image in the response
+            if 'fingerprint_image' in response_data:
+                save_base64_image(response_data['fingerprint_image'], username)
+            
+            # Save remaining data to JSON file
+            remaining_data = {
+                'username': username,
+                'droneid': response_data.get('droneid', ''),
+                'pilotid': response_data.get('pilotid', ''),
+                'address': response_data.get('address', ''),
+                'timestamp': response_data.get('timestamp', '')
+            }
+            with open('remaining_data.json', 'w') as f:
+                json.dump(remaining_data, f, indent=4)
         else:
             messagebox.showerror("Error", f"Signin failed: {response_data['error']}")
     except Exception as e:
@@ -125,26 +166,10 @@ def create_ui():
     button_save = tk.Button(root, text="Save Fingerprint Image", command=lambda: save_fingerprint_image(username_entry, password_entry, droneid_entry, pilotid_entry, address_entry))
     button_save.pack(pady=20)
     
-    button_signin = tk.Button(root, text="Signin", command=lambda: open_signin_window())
+    button_signin = tk.Button(root, text="Signin", command=lambda: user_signin(username_entry, password_entry))
     button_signin.pack(pady=10)
     
     root.mainloop()
 
-# Create the signin UI function
-def open_signin_window():
-    signin_window = tk.Toplevel()
-    signin_window.title("User Signin")
-    
-    tk.Label(signin_window, text="Username:").pack()
-    username_entry = tk.Entry(signin_window)
-    username_entry.pack()
-    
-    tk.Label(signin_window, text="Password:").pack()
-    password_entry = tk.Entry(signin_window, show="*")
-    password_entry.pack()
-    
-    button_signin = tk.Button(signin_window, text="Signin", command=lambda: user_signin(username_entry, password_entry))
-    button_signin.pack(pady=20)
-    
 if __name__ == "__main__":
     create_ui()
