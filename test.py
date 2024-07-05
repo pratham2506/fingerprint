@@ -1,4 +1,3 @@
-import time
 import numpy as np
 from matplotlib import pyplot as plt
 import serial
@@ -58,6 +57,29 @@ def send_fingerprint_to_api(username, password, droneid, pilotid, address, finge
     except Exception as e:
         messagebox.showerror("Error", f"Failed to connect to API: {str(e)}")
 
+# Function to handle user sign-in
+def user_signin(username_entry, password_entry):
+    username = username_entry.get()
+    password = password_entry.get()
+    
+    print(f"Signing in with Username: {username}, Password: {password}")  # Debugging print
+    
+    api_url = 'http://localhost:3000/api/signin'  # Adjust URL if needed
+    data = {
+        'username': username,
+        'password': password
+    }
+    try:
+        response = requests.post(api_url, json=data)
+        response_data = response.json()
+        print(f"API Response: {response_data}")  # Debugging print
+        if response.status_code == 200:
+            messagebox.showinfo("Success", "Signin successful!")
+        else:
+            messagebox.showerror("Error", f"Signin failed: {response_data['error']}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to connect to API: {str(e)}")
+
 # Callback function to save fingerprint image and send to API
 def save_fingerprint_image(username_entry, password_entry, droneid_entry, pilotid_entry, address_entry):
     try:
@@ -74,7 +96,7 @@ def save_fingerprint_image(username_entry, password_entry, droneid_entry, piloti
     except Exception as e:
         messagebox.showerror("Error", f"Failed to save fingerprint image: {str(e)}")
 
-# Create UI function
+# Create the main UI function
 def create_ui():
     root = tk.Tk()
     root.title("Fingerprint Image Capture")
@@ -103,7 +125,26 @@ def create_ui():
     button_save = tk.Button(root, text="Save Fingerprint Image", command=lambda: save_fingerprint_image(username_entry, password_entry, droneid_entry, pilotid_entry, address_entry))
     button_save.pack(pady=20)
     
+    button_signin = tk.Button(root, text="Signin", command=lambda: open_signin_window())
+    button_signin.pack(pady=10)
+    
     root.mainloop()
 
+# Create the signin UI function
+def open_signin_window():
+    signin_window = tk.Toplevel()
+    signin_window.title("User Signin")
+    
+    tk.Label(signin_window, text="Username:").pack()
+    username_entry = tk.Entry(signin_window)
+    username_entry.pack()
+    
+    tk.Label(signin_window, text="Password:").pack()
+    password_entry = tk.Entry(signin_window, show="*")
+    password_entry.pack()
+    
+    button_signin = tk.Button(signin_window, text="Signin", command=lambda: user_signin(username_entry, password_entry))
+    button_signin.pack(pady=20)
+    
 if __name__ == "__main__":
     create_ui()
