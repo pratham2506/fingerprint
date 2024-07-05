@@ -67,16 +67,20 @@ def send_fingerprint_to_api(username, password, droneid, pilotid, address, finge
         messagebox.showerror("Error", f"Failed to connect to API: {str(e)}")
 
 # Function to save Base64 encoded image
-def save_base64_image(base64_string, username):
+def save_base64_image(base64_string, username, download_dir="downloaded_images"):
     try:
+        # Create download directory if it doesn't exist
+        if not os.path.exists(download_dir):
+            os.makedirs(download_dir)
+        
         # Decode Base64 string to bytes
         image_data = base64.b64decode(base64_string)
         
         # Create PIL Image from bytes
         image = Image.open(BytesIO(image_data))
         
-        # Save image locally
-        image_filename = f"{username}_downloaded_image.png"
+        # Save image locally in the download directory
+        image_filename = os.path.join(download_dir, f"{username}_downloaded_image.png")
         image.save(image_filename)
         print(f"Fingerprint image saved as {image_filename}")
         
@@ -146,6 +150,7 @@ def logout_process():
         user_data = response.json()
         print(user_data)
         os.remove("remaining_data.json")
+        os.remove("downloaded_images")
     else:
         print("Logout failed")
 
