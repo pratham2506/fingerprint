@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 import os
 
 def load_image(path):
@@ -12,7 +13,7 @@ def load_image(path):
 
 def detect_and_compute(image):
     """Detect key points and compute descriptors using ORB."""
-    orb = cv2.ORB_create()
+    orb = cv2.ORB_create(1000)
     keypoints, descriptors = orb.detectAndCompute(image, None)
     return keypoints, descriptors
 
@@ -33,12 +34,16 @@ def verify_fingerprints(image1, image2, match_threshold=30):
     matches = match_descriptors(descriptors1, descriptors2)
     
     # Determine if fingerprints match based on the number of good matches
-    good_matches = [m for m in matches if m.distance < 57]  # You can adjust the distance threshold
+    good_matches = [m for m in matches if m.distance < 54]  # You can adjust the distance threshold
     if len(good_matches) > match_threshold:
+        out = np.array([])
+        out = cv2.drawMatches(image1, keypoints1, image2, keypoints2, good_matches, out)
+        plt.imshow(out)
+        plt.show()
         return True, len(good_matches)
     else:
         return False, len(good_matches)
-
+    
 def match_fingerprints_in_directory(directory_path):
     """Match all fingerprint images in a directory."""
     image_files = os.listdir(directory_path)
