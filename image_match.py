@@ -69,7 +69,7 @@ def match_fingerprints_in_directory(directory_path):
     return matched_images
 
 if __name__ == "__main__":
-    directory_path = "./fingerprints"
+    directory_path = "./uploads"
     matched_images = match_fingerprints_in_directory(directory_path)
     
     if matched_images:

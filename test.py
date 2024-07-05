@@ -139,6 +139,16 @@ def save_fingerprint_image(username_entry, password_entry, droneid_entry, piloti
     except Exception as e:
         messagebox.showerror("Error", f"Failed to save fingerprint image: {str(e)}")
 
+def logout_process():
+    endpoint = "http://localhost:3000/api/logout"
+    response = requests.post(endpoint)
+    if response.status_code == 200:
+        user_data = response.json()
+        print(user_data)
+        os.remove("remaining_data.json")
+    else:
+        print("Logout failed")
+
 # Create the main UI function
 def create_ui():
     root = tk.Tk()
@@ -170,6 +180,9 @@ def create_ui():
     
     button_signin = tk.Button(root, text="Signin", command=lambda: user_signin(username_entry, password_entry))
     button_signin.pack(pady=10)
+
+    button_logout = tk.Button(root, text="Logout", command=lambda: logout_process())
+    button_logout.pack(pady=10)
     
     root.mainloop()
 
