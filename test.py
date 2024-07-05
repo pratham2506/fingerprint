@@ -11,6 +11,7 @@ import base64
 from io import BytesIO
 import adafruit_fingerprint
 import cv2
+import shutil
 
 uart = serial.Serial("COM4", baudrate=57600, timeout=1)
 finger = adafruit_fingerprint.Adafruit_Fingerprint(uart)
@@ -221,13 +222,24 @@ def user_fingerprint_authentication():
     print(f"Fingerprint image saved as {save_path}")
     
     image1 = save_path
-    image2 = "./downloaded_images/go_downloaded_image.png"
+    image2 = "./downloaded_images/pratham_downloaded_image.png"
     
     match_result, match_count = verify_fingerprints(image1, image2)
     if match_result:
         messagebox.showinfo("Success", "Fingerprint verified successfully!")
     else:
         messagebox.showerror("Error", f"Fingerprint verification failed. Match count: {match_count}")
+
+def logout_process():
+    endpoint = "http://localhost:3000/api/logout"
+    response = requests.post(endpoint)
+    if response.status_code == 200:
+        user_data = response.json()
+        print(user_data)
+        os.remove("remaining_data.json")
+        shutil.rmtree("downloaded_images")
+    else:
+        print("Logout failed")
 
 def open_signup_window():
     signup_window = tk.Toplevel()
@@ -294,5 +306,8 @@ signin_button.pack(pady=10)
 
 verify_button = tk.Button(root, text="Verify Fingerprint", command=open_verify_fingerprint_window)
 verify_button.pack(pady=10)
+
+button_logout = tk.Button(root, text="Logout", command=lambda: logout_process())
+button_logout.pack(pady=10)
 
 root.mainloop()
