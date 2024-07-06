@@ -6,6 +6,7 @@ import serial
 import requests
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import ttk
 from PIL import Image
 import base64
 from io import BytesIO
@@ -16,7 +17,6 @@ import shutil
 uart = serial.Serial("COM4", baudrate=57600, timeout=1)
 finger = adafruit_fingerprint.Adafruit_Fingerprint(uart)
 
-# Function to get and save fingerprint image locally
 def get_fingerprint_photo(username, save_path=""):
     print("Waiting for image...")
     while finger.get_image() != adafruit_fingerprint.OK:
@@ -32,19 +32,16 @@ def get_fingerprint_photo(username, save_path=""):
     
     imgArray = np.reshape(imgArray, (288, 256))
     
-    # Construct filename with username
     if not save_path:
         save_path = f"{username}_fingerprint.png"
     
     plt.imsave(save_path, imgArray, cmap='gray')
     print(f"Fingerprint image saved as {save_path}")
     
-    # Return the path where the image is saved
     return save_path
 
-# Function to send fingerprint image and data to API
 def send_fingerprint_to_api(username, password, droneid, pilotid, address, fingerprint_image_path):
-    api_url = 'http://localhost:3000/api/fingerprint/insert'  # Adjust URL if needed
+    api_url = 'http://localhost:3000/api/fingerprint/insert'
     files = {'fingerprint_image': open(fingerprint_image_path, 'rb')}
     data = {
         'username': username,
@@ -63,20 +60,15 @@ def send_fingerprint_to_api(username, password, droneid, pilotid, address, finge
     except Exception as e:
         messagebox.showerror("Error", f"Failed to connect to API: {str(e)}")
 
-# Function to save Base64 encoded image
 def save_base64_image(base64_string, username, download_dir="downloaded_images"):
     try:
-        # Create download directory if it doesn't exist
         if not os.path.exists(download_dir):
             os.makedirs(download_dir)
         
-        # Decode Base64 string to bytes
         image_data = base64.b64decode(base64_string)
         
-        # Create PIL Image from bytes
         image = Image.open(BytesIO(image_data))
         
-        # Save image locally in the download directory
         image_filename = os.path.join(download_dir, f"{username}_downloaded_image.png")
         image.save(image_filename)
         print(f"Fingerprint image saved as {image_filename}")
@@ -84,14 +76,13 @@ def save_base64_image(base64_string, username, download_dir="downloaded_images")
     except Exception as e:
         print(f"Error saving fingerprint image: {str(e)}")
 
-# Function to handle user sign-in
 def user_signin(username_entry, password_entry):
     username = username_entry.get()
     password = password_entry.get()
     
-    print(f"Signing in with Username: {username}, Password: {password}")  # Debugging print
+    print(f"Signing in with Username: {username}, Password: {password}")
     
-    api_url = 'http://localhost:3000/api/signin'  # Adjust URL if needed
+    api_url = 'http://localhost:3000/api/signin'
     data = {
         'username': username,
         'password': password
@@ -102,11 +93,9 @@ def user_signin(username_entry, password_entry):
         if response.status_code == 200:
             messagebox.showinfo("Success", "Signin successful!")
             
-            # Check if there's a fingerprint image in the response
             if 'fingerprint_image' in response_data:
                 save_base64_image(response_data['fingerprint_image'], username)
             
-            # Save remaining data to JSON file
             remaining_data = {
                 'username': username,
                 'droneid': response_data.get('droneid', ''),
@@ -121,10 +110,8 @@ def user_signin(username_entry, password_entry):
     except Exception as e:
         messagebox.showerror("Error", f"Failed to connect to API: {str(e)}")
 
-# Callback function to save fingerprint image and send to API
 def save_fingerprint_image(username_entry, password_entry, droneid_entry, pilotid_entry, address_entry):
     try:
-        # Fetch user inputs
         username = username_entry.get()
         password = password_entry.get()
         droneid = int(droneid_entry.get())
@@ -140,7 +127,6 @@ def save_fingerprint_image(username_entry, password_entry, droneid_entry, piloti
         messagebox.showerror("Error", f"Failed to save fingerprint image: {str(e)}")
 
 def load_image(path):
-    """Load an image from the specified file path and convert it to grayscale."""
     image = cv2.imread(path)
     if image is None:
         raise FileNotFoundError(f"Image at path {path} not found.")
@@ -148,17 +134,14 @@ def load_image(path):
     return gray_image
 
 def detect_and_compute(image):
-    """Detect key points and compute descriptors using ORB."""
     orb = cv2.ORB_create(nfeatures=1500)
     keypoints, descriptors = orb.detectAndCompute(image, None)
     return keypoints, descriptors
 
 def match_descriptors(descriptors1, descriptors2):
-    """Match descriptors using BFMatcher with a ratio test."""
     bf = cv2.BFMatcher(cv2.NORM_HAMMING)
     matches = bf.knnMatch(descriptors1, descriptors2, k=2)
     
-    # Apply ratio test
     good_matches = []
     for m, n in matches:
         if m.distance < 0.75 * n.distance:
@@ -166,32 +149,26 @@ def match_descriptors(descriptors1, descriptors2):
     return good_matches
 
 def verify_fingerprints(image1_path, image2_path, min_match_count=10):
-    """Verify if two fingerprint images match."""
-    # Load images
     image1 = load_image(image1_path)
     image2 = load_image(image2_path)
     
-    # Detect key points and compute descriptors
     keypoints1, descriptors1 = detect_and_compute(image1)
     keypoints2, descriptors2 = detect_and_compute(image2)
     
     if descriptors1 is None or descriptors2 is None:
         return False, 0
     
-    # Match descriptors
     matches = match_descriptors(descriptors1, descriptors2)
-    
-    # Ensure there are enough matches
+    out = cv2.drawMatches(image1, keypoints1, image2, keypoints2, matches, None)
+    plt.imshow(out)
+    plt.show()
     if len(matches) > min_match_count:
-        # Extract location of good matches
         src_pts = np.float32([keypoints1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
         dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
         
-        # Compute homography using RANSAC
         M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
         matches_mask = mask.ravel().tolist()
         
-        # Verify the match using the homography matrix
         if M is not None and sum(matches_mask) > min_match_count:
             out = cv2.drawMatches(image1, keypoints1, image2, keypoints2, matches, None, 
                                   matchesMask=matches_mask, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
@@ -215,20 +192,29 @@ def user_fingerprint_authentication():
     
     imgArray = np.reshape(imgArray, (288, 256))
     
-    # Construct filename
     save_path = "match_fingerprint.png"
     
     plt.imsave(save_path, imgArray, cmap='gray')
     print(f"Fingerprint image saved as {save_path}")
     
-    image1 = save_path
-    image2 = "./downloaded_images/pratham_downloaded_image.png"
+    matched = False
+    match_count = 0
+    downloaded_images_dir = "./downloaded_images"
     
-    match_result, match_count = verify_fingerprints(image1, image2)
-    if match_result:
-        messagebox.showinfo("Success", "Fingerprint verified successfully!")
+    for image_file in os.listdir(downloaded_images_dir):
+        if image_file.endswith("_downloaded_image.png"):
+            image2_path = os.path.join(downloaded_images_dir, image_file)
+            match_result, count = verify_fingerprints(save_path, image2_path)
+            if match_result:
+                matched = True
+                match_count = count
+                break
+    
+    if matched:
+        messagebox.showinfo("Success", f"Fingerprint verified successfully! Match count: {match_count}")
     else:
         messagebox.showerror("Error", f"Fingerprint verification failed. Match count: {match_count}")
+
 
 def logout_process():
     endpoint = "http://localhost:3000/api/logout"
@@ -236,78 +222,129 @@ def logout_process():
     if response.status_code == 200:
         user_data = response.json()
         print(user_data)
+        if os.path.exists("match_fingerprint.png"):
+            os.remove("match_fingerprint.png")
         os.remove("remaining_data.json")
         shutil.rmtree("downloaded_images")
     else:
         print("Logout failed")
 
-def open_signup_window():
-    signup_window = tk.Toplevel()
-    signup_window.title("Signup")
-    signup_window.geometry("400x300")
+class MainApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Main Window")
+        self.geometry("600x400")
+        self.configure(bg="#f0f0f0")
 
-    tk.Label(signup_window, text="Username:").pack(pady=5)
-    username_entry = tk.Entry(signup_window)
-    username_entry.pack(pady=5)
+        self.frames = {}
+        for F in (HomeScreen, SignupScreen, SigninScreen, FingerprintMatchScreen, LogoutScreen):
+            page_name = F.__name__
+            frame = F(parent=self, controller=self)
+            self.frames[page_name] = frame
+            frame.grid(row=0, column=0, sticky="nsew")
 
-    tk.Label(signup_window, text="Password:").pack(pady=5)
-    password_entry = tk.Entry(signup_window, show="*")
-    password_entry.pack(pady=5)
+        self.show_frame("HomeScreen")
 
-    tk.Label(signup_window, text="Drone ID:").pack(pady=5)
-    droneid_entry = tk.Entry(signup_window)
-    droneid_entry.pack(pady=5)
+    def show_frame(self, page_name):
+        frame = self.frames[page_name]
+        frame.tkraise()
 
-    tk.Label(signup_window, text="Pilot ID:").pack(pady=5)
-    pilotid_entry = tk.Entry(signup_window)
-    pilotid_entry.pack(pady=5)
+class HomeScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
 
-    tk.Label(signup_window, text="Address:").pack(pady=5)
-    address_entry = tk.Entry(signup_window)
-    address_entry.pack(pady=5)
+        tk.Label(self, text="Welcome", font=("Helvetica", 20), bg="#f0f0f0").pack(pady=20)
 
-    submit_button = tk.Button(signup_window, text="Signup", command=lambda: save_fingerprint_image(username_entry, password_entry, droneid_entry, pilotid_entry, address_entry))
-    submit_button.pack(pady=10)
+        ttk.Button(self, text="Signup", command=lambda: controller.show_frame("SignupScreen")).pack(pady=10)
+        ttk.Button(self, text="Signin", command=lambda: controller.show_frame("SigninScreen")).pack(pady=10)
+        ttk.Button(self, text="Fingerprint Match", command=lambda: controller.show_frame("FingerprintMatchScreen")).pack(pady=10)
+        ttk.Button(self, text="Logout", command=lambda: controller.show_frame("LogoutScreen")).pack(pady=10)
 
-def open_signin_window():
-    signin_window = tk.Toplevel()
-    signin_window.title("Signin")
-    signin_window.geometry("400x300")
+class SignupScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
 
-    tk.Label(signin_window, text="Username:").pack(pady=5)
-    username_entry = tk.Entry(signin_window)
-    username_entry.pack(pady=5)
+        tk.Label(self, text="Signup", font=("Helvetica", 16), bg="#f0f0f0").pack(pady=10)
 
-    tk.Label(signin_window, text="Password:").pack(pady=5)
-    password_entry = tk.Entry(signin_window, show="*")
-    password_entry.pack(pady=5)
+        frame = tk.Frame(self, bg="#f0f0f0")
+        frame.pack(pady=10)
 
-    submit_button = tk.Button(signin_window, text="Signin", command=lambda: user_signin(username_entry, password_entry))
-    submit_button.pack(pady=10)
+        tk.Label(frame, text="Username:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        username_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        username_entry.grid(row=0, column=1, padx=10, pady=5)
 
-def open_verify_fingerprint_window():
-    verify_window = tk.Toplevel()
-    verify_window.title("Verify Fingerprint")
-    verify_window.geometry("400x300")
+        tk.Label(frame, text="Password:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        password_entry = tk.Entry(frame, show="*", font=('Helvetica', 12), width=30)
+        password_entry.grid(row=1, column=1, padx=10, pady=5)
 
-    submit_button = tk.Button(verify_window, text="Verify Fingerprint", command=user_fingerprint_authentication)
-    submit_button.pack(pady=10)
+        tk.Label(frame, text="Drone ID:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        droneid_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        droneid_entry.grid(row=2, column=1, padx=10, pady=5)
 
-# Main window
-root = tk.Tk()
-root.title("Fingerprint Authentication System")
-root.geometry("300x200")
+        tk.Label(frame, text="Pilot ID:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=3, column=0, padx=10, pady=5, sticky="w")
+        pilotid_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        pilotid_entry.grid(row=3, column=1, padx=10, pady=5)
 
-signup_button = tk.Button(root, text="Signup", command=open_signup_window)
-signup_button.pack(pady=10)
+        tk.Label(frame, text="Address:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=4, column=0, padx=10, pady=5, sticky="w")
+        address_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        address_entry.grid(row=4, column=1, padx=10, pady=5)
 
-signin_button = tk.Button(root, text="Signin", command=open_signin_window)
-signin_button.pack(pady=10)
+        tk.Button(self, text="Save Fingerprint", font=('Helvetica', 12), command=lambda: save_fingerprint_image(
+            username_entry, password_entry, droneid_entry, pilotid_entry, address_entry)).pack(pady=10)
+        
+        tk.Button(self, text="Close", font=('Helvetica', 12), command=lambda: controller.show_frame("HomeScreen")).pack(pady=10)
 
-verify_button = tk.Button(root, text="Verify Fingerprint", command=open_verify_fingerprint_window)
-verify_button.pack(pady=10)
+class SigninScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
 
-button_logout = tk.Button(root, text="Logout", command=lambda: logout_process())
-button_logout.pack(pady=10)
+        tk.Label(self, text="Signin", font=("Helvetica", 16), bg="#f0f0f0").pack(pady=10)
 
-root.mainloop()
+        frame = tk.Frame(self, bg="#f0f0f0")
+        frame.pack(pady=10)
+
+        tk.Label(frame, text="Username:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        username_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        username_entry.grid(row=0, column=1, padx=10, pady=5)
+
+        tk.Label(frame, text="Password:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        password_entry = tk.Entry(frame, show="*", font=('Helvetica', 12), width=30)
+        password_entry.grid(row=1, column=1, padx=10, pady=5)
+
+        tk.Button(self, text="Signin", font=('Helvetica', 12), command=lambda: user_signin(username_entry, password_entry)).pack(pady=10)
+        
+        tk.Button(self, text="Close", font=('Helvetica', 12), command=lambda: controller.show_frame("HomeScreen")).pack(pady=10)
+
+class FingerprintMatchScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
+
+        tk.Label(self, text="Fingerprint Match", font=("Helvetica", 16), bg="#f0f0f0").pack(pady=10)
+
+        tk.Button(self, text="Start Matching", font=('Helvetica', 12), command=user_fingerprint_authentication).pack(pady=10)
+        
+        tk.Button(self, text="Close", font=('Helvetica', 12), command=lambda: controller.show_frame("HomeScreen")).pack(pady=10)
+
+class LogoutScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
+
+        tk.Label(self, text="Logout", font=("Helvetica", 16), bg="#f0f0f0").pack(pady=10)
+
+        tk.Button(self, text="Logout", font=('Helvetica', 12), command=logout_process).pack(pady=10)
+        
+        tk.Button(self, text="Close", font=('Helvetica', 12), command=lambda: controller.show_frame("HomeScreen")).pack(pady=10)
+
+if __name__ == "__main__":
+    app = MainApp()
+    app.mainloop()
