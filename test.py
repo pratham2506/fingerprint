@@ -238,7 +238,7 @@ class MainApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Main Window")
-        self.geometry("600x400")
+        self.geometry("1000x600+0+0")
         self.configure(bg="#f0f0f0")
 
         self.frames = {}

@@ -112,7 +112,11 @@ app.post('/api/signin', (req, res) => {
 
             res.status(200).json({
                 token: token,
-                fingerprint_image: fingerprint_image_base64
+                fingerprint_image: fingerprint_image_base64,
+                username: user.username,
+                droneid: user.droneid,
+                pilotid: user.pilotid,
+                address: user.address
             });
         });
     });
@@ -147,9 +151,19 @@ app.get('/api/fingerprint/retrieve/:pilotid', (req, res) => {
 app.post('/api/fingerprint/insert', upload.single('fingerprint_image'), (req, res) => {
     const { username, password, droneid, pilotid, address } = req.body;
     const fingerprint_image_path = req.file ? req.file.path : null;
+    let newFilePath = fingerprint_image_path; // Initialize newFilePath with fingerprint_image_path
+
+    // Capture original filename if available
+    const original_filename = req.file ? req.file.originalname : null;
+
+    // Move uploaded file to destination with original filename
+    if (fingerprint_image_path && original_filename) {
+        newFilePath = path.join('./uploads', original_filename);
+        fs.renameSync(fingerprint_image_path, newFilePath); // Rename the file to the original filename
+    }
 
     db.run('INSERT INTO fingerprints (username, password, droneid, pilotid, address, fingerprint_image_path) VALUES (?, ?, ?, ?, ?, ?)',
-        [username, password, droneid, pilotid, address, fingerprint_image_path],
+        [username, password, droneid, pilotid, address, newFilePath],
         function (err) {
             if (err) {
                 console.error('Error inserting fingerprint data:', err);

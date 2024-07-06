@@ -1,418 +1,369 @@
-from tkinter import Tk, Button, StringVar, OptionMenu, Entry, Label, Toplevel, messagebox, Text, Scrollbar, END
-from tkinter import ttk
-import requests
-from serial.tools.list_ports import comports
-import serial
-import adafruit_fingerprint
-import time
-import base64
-from cryptography.fernet import Fernet
-import json
 import os
+import json
+import numpy as np
+from matplotlib import pyplot as plt
+import serial
+import serial.tools.list_ports  # Add this line
+import requests
+import tkinter as tk
+from tkinter import messagebox
+from tkinter import ttk
+from PIL import Image
+import base64
+from io import BytesIO
+import adafruit_fingerprint
+import cv2
+import shutil
 
-# Load encryption key
-with open("secret.key", "rb") as key_file:
-    key = key_file.read()
-cipher_suite = Fernet(key)
+uart = serial.Serial("COM4", baudrate=57600, timeout=1)
+finger = adafruit_fingerprint.Adafruit_Fingerprint(uart)
 
-# API base URL
-API_BASE_URL = "http://localhost:3000/api"
+def get_fingerprint_photo(username, com_port, save_path=""):
+    uart = serial.Serial(com_port, baudrate=57600, timeout=1)
+    finger = adafruit_fingerprint.Adafruit_Fingerprint(uart)
 
-# Global variable for fingerprint sensor
-finger = None
+    print("Waiting for image...")
+    while finger.get_image() != adafruit_fingerprint.OK:
+        pass
+    
+    print("Got image...Transferring image data...")
+    imgList = finger.get_fpdata("image", 2)
+    imgArray = np.zeros(73728, np.uint8)
+    
+    for i, val in enumerate(imgList):
+        imgArray[(i * 2)] = val & 240
+        imgArray[(i * 2) + 1] = (val & 15) * 16
+    
+    imgArray = np.reshape(imgArray, (288, 256))
+    
+    if not save_path:
+        save_path = f"{username}_fingerprint.png"
+    
+    plt.imsave(save_path, imgArray, cmap='gray')
+    print(f"Fingerprint image saved as {save_path}")
+    
+    return save_path
 
-# Initialize UART and fingerprint sensor dynamically
-def initialize_uart(com_port):
-    global finger
-    try:
-        uart = serial.Serial(com_port, baudrate=57600, timeout=2)
-        time.sleep(1)
-        finger = adafruit_fingerprint.Adafruit_Fingerprint(uart)
-        return True
-    except serial.SerialException as e:
-        update_status(f"Error initializing UART on {com_port}: {e}")
-        return False
 
-# Function to encrypt data
-def encrypt_data(data):
-    encrypted_data = cipher_suite.encrypt(bytes(data))
-    return base64.urlsafe_b64encode(encrypted_data).decode('utf-8')
-
-def decrypt_data(encrypted_data):
-    decrypted_data = cipher_suite.decrypt(base64.urlsafe_b64decode(encrypted_data))
-    return decrypted_data
-
-# Function to insert fingerprint data into database via API
-def insert_fingerprint_data(username, password, droneid, pilotid, address, fingerprint_data, fingerprint_image):
-    endpoint = f"{API_BASE_URL}/fingerprint/insert"
-    files = {'fingerprint_image': open(fingerprint_image, 'rb')}
+def send_fingerprint_to_api(username, password, droneid, pilotid, address, fingerprint_image_path):
+    api_url = 'http://localhost:3000/api/fingerprint/insert'
+    files = {'fingerprint_image': open(fingerprint_image_path, 'rb')}
     data = {
         'username': username,
         'password': password,
         'droneid': droneid,
         'pilotid': pilotid,
-        'address': address,
-        'fingerprint_data': fingerprint_data,
+        'address': address
     }
-    response = requests.post(endpoint, files=files, data=data)
-    if response.status_code == 201:
-        update_status("Fingerprint data and image stored using API.")
-    else:
-        update_status(f"Error storing fingerprint data and image: {response.text}")
-# Function to enroll fingerprint and store in database
-def enroll_finger(username, password, droneid, pilotid, address):
-    global finger
-    if not finger:
-        update_status("Fingerprint sensor not initialized.")
-        return False
-    
-    for fingerimg in range(1, 3):
-        if fingerimg == 1:
-            update_status("Place finger on sensor...")
+    try:
+        response = requests.post(api_url, files=files, data=data)
+        response_data = response.json()
+        if response.status_code == 201:
+            messagebox.showinfo("Success", "Fingerprint image and data saved successfully!")
         else:
-            update_status("Place same finger again...")
+            messagebox.showerror("Error", f"Failed to save fingerprint image and data: {response_data['error']}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to connect to API: {str(e)}")
 
-        while True:
-            i = finger.get_image()
-            if i == adafruit_fingerprint.OK:
-                update_status("Image taken")
-                break
-            if i == adafruit_fingerprint.NOFINGER:
-                update_status(".")
-            elif i == adafruit_fingerprint.IMAGEFAIL:
-                update_status("Imaging error")
-                return False
-            else:
-                update_status("Other error")
-                return False
-
-        update_status("Templating...")
-        i = finger.image_2_tz(fingerimg)
-        if i == adafruit_fingerprint.OK:
-            update_status("Templated")
-        else:
-            if i == adafruit_fingerprint.IMAGEMESS:
-                update_status("Image too messy")
-            elif i == adafruit_fingerprint.FEATUREFAIL:
-                update_status("Could not identify features")
-            elif i == adafruit_fingerprint.INVALIDIMAGE:
-                update_status("Image invalid")
-            else:
-                update_status("Other error")
-            return False
-
-        if fingerimg == 1:
-            update_status("Remove finger")
-            time.sleep(1)
-            while i != adafruit_fingerprint.NOFINGER:
-                i = finger.get_image()
-
-    update_status("Creating model...")
-    i = finger.create_model()
-    if i == adafruit_fingerprint.OK:
-        update_status("Created")
-        # Store fingerprint image locally
-        fingerprint_image_path = f"finger_{username}_{pilotid}.bmp"
-        finger.download_image(0x01, fingerprint_image_path)
+def save_base64_image(base64_string, username, download_dir="downloaded_images"):
+    try:
+        if not os.path.exists(download_dir):
+            os.makedirs(download_dir)
         
-        # Encrypt fingerprint image data
-        with open(fingerprint_image_path, 'rb') as img_file:
-            image_data = img_file.read()
-            encrypted_image_data = encrypt_data(image_data)
+        image_data = base64.b64decode(base64_string)
+        
+        image = Image.open(BytesIO(image_data))
+        
+        image_filename = os.path.join(download_dir, f"{username}_downloaded_image.png")
+        image.save(image_filename)
+        print(f"Fingerprint image saved as {image_filename}")
+        
+    except Exception as e:
+        print(f"Error saving fingerprint image: {str(e)}")
 
-        # Store fingerprint data and encrypted image in database via API
-        insert_fingerprint_data(username, password, droneid, pilotid, address, encrypted_image_data, fingerprint_image_path)
-        os.remove(fingerprint_image_path)  # Remove local image after upload
-
-    else:
-        if i == adafruit_fingerprint.ENROLLMISMATCH:
-            update_status("Prints did not match")
-        else:
-            update_status("Other error")
-        return False
-
-    return True
-
-# Function to fetch available COM ports
-def fetch_com_ports():
-    ports = [port.device for port in comports()]
-    return ports
-
-# Function to handle COM port selection change
-def com_port_changed(*args):
-    selected_port = selected_com_port.get()
-    if initialize_uart(selected_port):
-        update_status(f"Initialized UART on {selected_port}")
-    else:
-        update_status(f"Failed to initialize UART on {selected_port}")
-
-# Function to handle Signup process
-def signup_process():
-    clear_frame()
+def user_signin(username_entry, password_entry):
+    username = username_entry.get()
+    password = password_entry.get()
     
-    Label(main_frame, text="Username:").grid(row=0, column=0, padx=10, pady=5)
-    username_entry = Entry(main_frame)
-    username_entry.grid(row=0, column=1, padx=10, pady=5)
+    print(f"Signing in with Username: {username}, Password: {password}")
+    
+    api_url = 'http://localhost:3000/api/signin'
+    data = {
+        'username': username,
+        'password': password
+    }
+    try:
+        response = requests.post(api_url, json=data)
+        response_data = response.json()
+        if response.status_code == 200:
+            messagebox.showinfo("Success", "Signin successful!")
+            
+            if 'fingerprint_image' in response_data:
+                save_base64_image(response_data['fingerprint_image'], username)
+            
+            remaining_data = {
+                'username': username,
+                'droneid': response_data.get('droneid', ''),
+                'pilotid': response_data.get('pilotid', ''),
+                'address': response_data.get('address', ''),
+                'timestamp': response_data.get('timestamp', '')
+            }
+            with open('remaining_data.json', 'w') as f:
+                json.dump(remaining_data, f, indent=4)
+        else:
+            messagebox.showerror("Error", f"Signin failed: {response_data['error']}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to connect to API: {str(e)}")
 
-    Label(main_frame, text="Password:").grid(row=1, column=0, padx=10, pady=5)
-    password_entry = Entry(main_frame, show='*')
-    password_entry.grid(row=1, column=1, padx=10, pady=5)
-
-    Label(main_frame, text="Drone ID:").grid(row=2, column=0, padx=10, pady=5)
-    droneid_entry = Entry(main_frame)
-    droneid_entry.grid(row=2, column=1, padx=10, pady=5)
-
-    Label(main_frame, text="Pilot ID:").grid(row=3, column=0, padx=10, pady=5)
-    pilotid_entry = Entry(main_frame)
-    pilotid_entry.grid(row=3, column=1, padx=10, pady=5)
-
-    Label(main_frame, text="Address:").grid(row=4, column=0, padx=10, pady=5)
-    address_entry = Entry(main_frame)
-    address_entry.grid(row=4, column=1, padx=10, pady=5)
-
-    def enroll_fingerprint():
+def save_fingerprint_image(username_entry, password_entry, droneid_entry, pilotid_entry, address_entry, com_port):
+    try:
         username = username_entry.get()
         password = password_entry.get()
         droneid = int(droneid_entry.get())
         pilotid = int(pilotid_entry.get())
         address = address_entry.get()
-
-        if enroll_finger(username, password, droneid, pilotid, address):
-            messagebox.showinfo("Success", "Fingerprint enrolled and data stored successfully.")
-            show_main_buttons()
-        else:
-            messagebox.showerror("Error", "Fingerprint enrollment failed. Please try again.")
-
-    Button(main_frame, text="Enroll Fingerprint", command=enroll_fingerprint).grid(row=5, column=0, columnspan=2, padx=10, pady=10)
-
-# Function to handle Signin process
-def signin_process():
-    clear_frame()
-
-    Label(main_frame, text="Username:").grid(row=0, column=0, padx=10, pady=5)
-    username_entry = Entry(main_frame)
-    username_entry.grid(row=0, column=1, padx=10, pady=5)
-
-    Label(main_frame, text="Password:").grid(row=1, column=0, padx=10, pady=5)
-    password_entry = Entry(main_frame, show='*')
-    password_entry.grid(row=1, column=1, padx=10, pady=5)
-
-    def signin():
-        username = username_entry.get()
-        password = password_entry.get()
-
-        # Authenticate user via API
-        endpoint = f"{API_BASE_URL}/signin"
-        data = {'username': username, 'password': password}
-        response = requests.post(endpoint, json=data)
-
-        if response.status_code == 200:
-            try:
-                user_data = response.json()
-                token = user_data.get('token')
-                with open("token.txt", "w") as token_file:
-                    token_file.write(token)
-                update_status("Authentication successful. Token stored in local storage.")
-                store_user_data_locally(user_data)
-                show_user_dashboard()
-            except ValueError:
-                messagebox.showerror("Error", "Invalid JSON format received from server.")
-        else:
-            messagebox.showerror("Error", "Invalid username or password. Please try again.")
-
-    Button(main_frame, text="Signin", command=signin).grid(row=2, column=0, columnspan=2, padx=10, pady=10)
-
-# Function to open the user dashboard after successful login
-def show_user_dashboard():
-    clear_frame()
-    
-    verify_button = Button(main_frame, text="Verify Fingerprint", command=verify_fingerprint_process)
-    verify_button.pack(pady=10)
-    
-    logout_button = Button(main_frame, text="Logout", command=logout_process)
-    logout_button.pack(pady=10)
-
-def read_from_json():
-    global finger  # Assuming `finger` is initialized somewhere else
-    
-    if not finger:
-        update_status("Fingerprint sensor not initialized.")
-        return False
-    
-    try:
-        with open('user_data.json', 'r') as jsonfile:
-            jsondata = json.load(jsonfile)
-            fetch_fingerprint = jsondata['user']['fingerprint_data']['data']
-            fingerprint_bytes = fetch_fingerprint
         
-        if finger.send_fpdata(fingerprint_bytes,"char",10):
-            print("Stored on sensor")
-        else:
-            print("Not stored on sensor")
-            
-    except FileNotFoundError:
-        print("JSON file not found.")
-    except KeyError:
-        print("JSON file format incorrect.")
+        fingerprint_image_path = get_fingerprint_photo(username, com_port)
+        
+        send_fingerprint_to_api(username, password, droneid, pilotid, address, fingerprint_image_path)
+        if os.path.exists(f"{username}_fingerprint.png"):
+            os.remove(f"{username}_fingerprint.png")
     except Exception as e:
-        print(f"Error: {e}")
+        messagebox.showerror("Error", f"Failed to save fingerprint image: {str(e)}")
 
+def load_image(path):
+    image = cv2.imread(path)
+    if image is None:
+        raise FileNotFoundError(f"Image at path {path} not found.")
+    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return gray_image
 
-# Function to handle Fingerprint Verification process
-def verify_fingerprint_process():
-    global finger
-    if not finger:
-        update_status("Fingerprint sensor not initialized.")
-        return False
-    for fingerimg in range(1, 3):
-        if fingerimg == 1:
-            update_status("Place finger on sensor...")
-        else:
-            update_status("Place same finger again...")
+def detect_and_compute(image):
+    orb = cv2.ORB_create(nfeatures=1500)
+    keypoints, descriptors = orb.detectAndCompute(image, None)
+    return keypoints, descriptors
 
-        while True:
-            i = finger.get_image()
-            if i == adafruit_fingerprint.OK:
-                update_status("Image taken")
-                break
-            if i == adafruit_fingerprint.NOFINGER:
-                update_status(".")
-            elif i == adafruit_fingerprint.IMAGEFAIL:
-                update_status("Imaging error")
-                return False
-            else:
-                update_status("Other error")
-                return False
-
-        update_status("Templating...")
-        i = finger.image_2_tz(fingerimg)
-        if i == adafruit_fingerprint.OK:
-            update_status("Templated")
-        else:
-            if i == adafruit_fingerprint.IMAGEMESS:
-                update_status("Image too messy")
-            elif i == adafruit_fingerprint.FEATUREFAIL:
-                update_status("Could not identify features")
-            elif i == adafruit_fingerprint.INVALIDIMAGE:
-                update_status("Image invalid")
-            else:
-                update_status("Other error")
-            return False
-
-        if fingerimg == 1:
-            update_status("Remove finger")
-            time.sleep(1)
-            while i != adafruit_fingerprint.NOFINGER:
-                i = finger.get_image()
-
-    update_status("Creating model...")
-    i = finger.create_model()
-    if i == adafruit_fingerprint.OK:
-        update_status("Created")
-        # Store fingerprint data in database
-        fingerprint_data = finger.get_fpdata("image")
+def match_descriptors(descriptors1, descriptors2):
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING)
+    matches = bf.knnMatch(descriptors1, descriptors2, k=2)
     
-    #     filename = "fingerprint_data.json"
-    #     with open(filename, "w") as json_file:
-    #         json.dump(fingerprint_data, json_file, indent=4)
-    #         update_status(f"Fingerprint data saved to {filename}")
+    good_matches = []
+    for m, n in matches:
+        if m.distance < 0.75 * n.distance:
+            good_matches.append(m)
+    return good_matches
+
+def verify_fingerprints(image1_path, image2_path, min_match_count=10):
+    image1 = load_image(image1_path)
+    image2 = load_image(image2_path)
+    
+    keypoints1, descriptors1 = detect_and_compute(image1)
+    keypoints2, descriptors2 = detect_and_compute(image2)
+    
+    if descriptors1 is None or descriptors2 is None:
+        return False, 0
+    
+    matches = match_descriptors(descriptors1, descriptors2)
+    out = cv2.drawMatches(image1, keypoints1, image2, keypoints2, matches, None)
+    plt.imshow(out)
+    plt.show()
+    if len(matches) > min_match_count:
+        src_pts = np.float32([keypoints1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
         
-    #     return True
-    # else:
-    #     update_status("Model creation failed")
-    #     return False
+        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        matches_mask = mask.ravel().tolist()
+        
+        if M is not None and sum(matches_mask) > min_match_count:
+            out = cv2.drawMatches(image1, keypoints1, image2, keypoints2, matches, None, 
+                                  matchesMask=matches_mask, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+            plt.imshow(out)
+            plt.show()
+            return True, sum(matches_mask)
+    return False, 0
 
-    # update_status("Place finger on sensor...")
-    # while finger.get_image() != adafruit_fingerprint.OK:
-    #     pass
-    # update_status("Image taken")
+def user_fingerprint_authentication():
+    print("Waiting for image...")
+    while finger.get_image() != adafruit_fingerprint.OK:
+        pass
     
-    # update_status("Templating...")
-    # templated_fingerprint = finger.image_2_tz(1)
-    # if templated_fingerprint != adafruit_fingerprint.OK:
-    #     update_status("Templating failed")
-    #     return False
-
-    update_status("Searching...")
-    if finger.match_fingerprint_from_json('user_data.json') == fingerprint_data:
-        update_status("Fingerprint matched!")
-        messagebox.showinfo("Success", "Fingerprint matched successfully.")
+    print("Got image...Transferring image data...")
+    imgList = finger.get_fpdata("image", 2)
+    imgArray = np.zeros(73728, np.uint8)
+    
+    for i, val in enumerate(imgList):
+        imgArray[(i * 2)] = val & 240
+        imgArray[(i * 2) + 1] = (val & 15) * 16
+    
+    imgArray = np.reshape(imgArray, (288, 256))
+    
+    save_path = "match_fingerprint.png"
+    
+    plt.imsave(save_path, imgArray, cmap='gray')
+    print(f"Fingerprint image saved as {save_path}")
+    
+    matched = False
+    match_count = 0
+    downloaded_images_dir = "./downloaded_images"
+    
+    for image_file in os.listdir(downloaded_images_dir):
+        if image_file.endswith("_downloaded_image.png"):
+            image2_path = os.path.join(downloaded_images_dir, image_file)
+            match_result, count = verify_fingerprints(save_path, image2_path)
+            if match_result:
+                matched = True
+                match_count = count
+                break
+    
+    if matched:
+        messagebox.showinfo("Success", f"Fingerprint verified successfully! Match count: {match_count}")
     else:
-        update_status("Fingerprint did not match")
-        messagebox.showerror("Error", "Fingerprint did not match.")
+        messagebox.showerror("Error", f"Fingerprint verification failed. Match count: {match_count}")
 
-# Function to store user data locally
-def store_user_data_locally(user_data):
-    with open("user_data.json", "w") as file:
-        json.dump(user_data, file)
-    update_status("User data stored locally.")
 
-# Function to handle Logout process
 def logout_process():
-    if os.path.exists("token.txt"):
-        os.remove("token.txt")
-    if os.path.exists("user_data.json"):
-        os.remove("user_data.json")
-    update_status("Logged out successfully.")
-    messagebox.showinfo("Logout", "Logged out successfully.")
-    clear_frame()
-    show_main_buttons()
+    endpoint = "http://localhost:3000/api/logout"
+    response = requests.post(endpoint)
+    if response.status_code == 200:
+        user_data = response.json()
+        print(user_data)
+        if os.path.exists("match_fingerprint.png"):
+            os.remove("match_fingerprint.png")
+        os.remove("remaining_data.json")
+        shutil.rmtree("downloaded_images")
+    else:
+        print("Logout failed")
 
-# Function to update status messages
-def update_status(message):
-    status_text.config(state="normal")
-    status_text.insert(END, message + "\n")
-    status_text.config(state="disabled")
-    status_text.yview(END)
+class MainApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Main Window")
+        self.geometry("600x400")
+        self.configure(bg="#f0f0f0")
 
-# Function to clear main frame
-def clear_frame():
-    for widget in main_frame.winfo_children():
-        widget.destroy()
+        self.frames = {}
+        for F in (HomeScreen, SignupScreen, SigninScreen, FingerprintMatchScreen, LogoutScreen):
+            page_name = F.__name__
+            frame = F(parent=self, controller=self)
+            self.frames[page_name] = frame
+            frame.grid(row=0, column=0, sticky="nsew")
 
-# Function to show main buttons
-def show_main_buttons():
-    clear_frame()
-    signup_button = Button(main_frame, text="Signup", command=signup_process)
-    signup_button.pack(pady=10)
+        self.show_frame("HomeScreen")
 
-    signin_button = Button(main_frame, text="Signin", command=signin_process)
-    signin_button.pack(pady=10)
+    def show_frame(self, page_name):
+        frame = self.frames[page_name]
+        frame.tkraise()
 
-    check_login_status()  # Check login status when showing main buttons
+class HomeScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
 
-# Function to check login status
-def check_login_status():
-    if os.path.exists("token.txt"):
-        show_user_dashboard()  # If token exists, user is logged in, show dashboard
+        tk.Label(self, text="Welcome", font=("Helvetica", 20), bg="#f0f0f0").pack(pady=20)
 
-# Initialize Tkinter main window
-root = Tk()
-root.title("Fingerprint Authentication System")
+        # Dropdown to select COM port dynamically
+        tk.Label(self, text="Select COM Port:", bg="#f0f0f0", font=('Helvetica', 12)).pack(pady=10)
+        self.com_port_var = tk.StringVar(self)
+        self.com_ports_dropdown = ttk.Combobox(self, textvariable=self.com_port_var, state="readonly")
+        self.com_ports_dropdown.pack(pady=10)
+        self.update_com_ports_dropdown()
 
-# Main frame
-main_frame = ttk.Frame(root, padding="10")
-main_frame.pack(fill="both", expand=True)
+        ttk.Button(self, text="Signup", command=lambda: controller.show_frame("SignupScreen")).pack(pady=10)
+        ttk.Button(self, text="Signin", command=lambda: controller.show_frame("SigninScreen")).pack(pady=10)
+        ttk.Button(self, text="Fingerprint Match", command=lambda: controller.show_frame("FingerprintMatchScreen")).pack(pady=10)
+        ttk.Button(self, text="Logout", command=lambda: controller.show_frame("LogoutScreen")).pack(pady=10)
 
-# Status text box
-status_text = Text(root, height=10, state="disabled", wrap="word")
-status_text.pack(fill="x")
-scrollbar = Scrollbar(root, command=status_text.yview)
-scrollbar.pack(side="right", fill="y")
-status_text["yscrollcommand"] = scrollbar.set
+    def update_com_ports_dropdown(self):
+        ports = serial.tools.list_ports.comports()
+        com_ports = [port.device for port in ports]
+        self.com_ports_dropdown["values"] = com_ports
+        if com_ports:
+            self.com_ports_dropdown.current(0)  # Select the first port by default
 
-# Fetch and populate COM ports
-selected_com_port = StringVar()
-selected_com_port.set("Select COM port")
-ports = fetch_com_ports()
-if ports:
-    selected_com_port.set(ports[0])  # Set the first available port as default
-port_menu = OptionMenu(root, selected_com_port, *ports)
-port_menu.pack(pady=10)
-selected_com_port.trace("w", com_port_changed)
+class SignupScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
 
-# Show main buttons initially
-show_main_buttons()
+        tk.Label(self, text="Signup", font=("Helvetica", 16), bg="#f0f0f0").pack(pady=10)
 
-# Start Tkinter main loop
-root.mainloop()
+        frame = tk.Frame(self, bg="#f0f0f0")
+        frame.pack(pady=10)
+
+        tk.Label(frame, text="Username:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        username_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        username_entry.grid(row=0, column=1, padx=10, pady=5)
+
+        tk.Label(frame, text="Password:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        password_entry = tk.Entry(frame, show="*", font=('Helvetica', 12), width=30)
+        password_entry.grid(row=1, column=1, padx=10, pady=5)
+
+        tk.Label(frame, text="Drone ID:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        droneid_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        droneid_entry.grid(row=2, column=1, padx=10, pady=5)
+
+        tk.Label(frame, text="Pilot ID:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=3, column=0, padx=10, pady=5, sticky="w")
+        pilotid_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        pilotid_entry.grid(row=3, column=1, padx=10, pady=5)
+
+        tk.Label(frame, text="Address:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=4, column=0, padx=10, pady=5, sticky="w")
+        address_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        address_entry.grid(row=4, column=1, padx=10, pady=5)
+
+        tk.Button(self, text="Save Fingerprint", font=('Helvetica', 12), command=lambda: save_fingerprint_image(
+            username_entry, password_entry, droneid_entry, pilotid_entry, address_entry, self.com_port_var.get())).pack(pady=10)
+        
+        tk.Button(self, text="Close", font=('Helvetica', 12), command=lambda: controller.show_frame("HomeScreen")).pack(pady=10)
+
+class SigninScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
+
+        tk.Label(self, text="Signin", font=("Helvetica", 16), bg="#f0f0f0").pack(pady=10)
+
+        frame = tk.Frame(self, bg="#f0f0f0")
+        frame.pack(pady=10)
+
+        tk.Label(frame, text="Username:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        username_entry = tk.Entry(frame, font=('Helvetica', 12), width=30)
+        username_entry.grid(row=0, column=1, padx=10, pady=5)
+
+        tk.Label(frame, text="Password:", bg="#f0f0f0", font=('Helvetica', 12)).grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        password_entry = tk.Entry(frame, show="*", font=('Helvetica', 12), width=30)
+        password_entry.grid(row=1, column=1, padx=10, pady=5)
+
+        tk.Button(self, text="Signin", font=('Helvetica', 12), command=lambda: user_signin(username_entry, password_entry)).pack(pady=10)
+        
+        tk.Button(self, text="Close", font=('Helvetica', 12), command=lambda: controller.show_frame("HomeScreen")).pack(pady=10)
+
+class FingerprintMatchScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
+
+        tk.Label(self, text="Fingerprint Match", font=("Helvetica", 16), bg="#f0f0f0").pack(pady=10)
+
+        tk.Button(self, text="Start Matching", font=('Helvetica', 12), command=user_fingerprint_authentication).pack(pady=10)
+        
+        tk.Button(self, text="Close", font=('Helvetica', 12), command=lambda: controller.show_frame("HomeScreen")).pack(pady=10)
+
+class LogoutScreen(tk.Frame):
+    def __init__(self, parent, controller):
+        tk.Frame.__init__(self, parent)
+        self.controller = controller
+        self.configure(bg="#f0f0f0")
+
+        tk.Label(self, text="Logout", font=("Helvetica", 16), bg="#f0f0f0").pack(pady=10)
+
+        tk.Button(self, text="Logout", font=('Helvetica', 12), command=logout_process).pack(pady=10)
+        
+        tk.Button(self, text="Close", font=('Helvetica', 12), command=lambda: controller.show_frame("HomeScreen")).pack(pady=10)
+
+if __name__ == "__main__":
+    app = MainApp()
+    app.mainloop()
