@@ -3,7 +3,6 @@ import json
 import numpy as np
 from matplotlib import pyplot as plt
 import serial
-import serial.tools.list_ports  # Add this line
 import requests
 import tkinter as tk
 from tkinter import messagebox
@@ -18,10 +17,7 @@ import shutil
 uart = serial.Serial("COM4", baudrate=57600, timeout=1)
 finger = adafruit_fingerprint.Adafruit_Fingerprint(uart)
 
-def get_fingerprint_photo(username, com_port, save_path=""):
-    uart = serial.Serial(com_port, baudrate=57600, timeout=1)
-    finger = adafruit_fingerprint.Adafruit_Fingerprint(uart)
-
+def get_fingerprint_photo(username, save_path=""):
     print("Waiting for image...")
     while finger.get_image() != adafruit_fingerprint.OK:
         pass
@@ -43,7 +39,6 @@ def get_fingerprint_photo(username, com_port, save_path=""):
     print(f"Fingerprint image saved as {save_path}")
     
     return save_path
-
 
 def send_fingerprint_to_api(username, password, droneid, pilotid, address, fingerprint_image_path):
     api_url = 'http://localhost:3000/api/fingerprint/insert'
@@ -115,7 +110,7 @@ def user_signin(username_entry, password_entry):
     except Exception as e:
         messagebox.showerror("Error", f"Failed to connect to API: {str(e)}")
 
-def save_fingerprint_image(username_entry, password_entry, droneid_entry, pilotid_entry, address_entry, com_port):
+def save_fingerprint_image(username_entry, password_entry, droneid_entry, pilotid_entry, address_entry):
     try:
         username = username_entry.get()
         password = password_entry.get()
@@ -123,7 +118,7 @@ def save_fingerprint_image(username_entry, password_entry, droneid_entry, piloti
         pilotid = int(pilotid_entry.get())
         address = address_entry.get()
         
-        fingerprint_image_path = get_fingerprint_photo(username, com_port)
+        fingerprint_image_path = get_fingerprint_photo(username)
         
         send_fingerprint_to_api(username, password, droneid, pilotid, address, fingerprint_image_path)
         if os.path.exists(f"{username}_fingerprint.png"):
@@ -238,7 +233,7 @@ class MainApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Main Window")
-        self.geometry("1000x600+0+0")
+        self.geometry("600x400")
         self.configure(bg="#f0f0f0")
 
         self.frames = {}
@@ -262,24 +257,10 @@ class HomeScreen(tk.Frame):
 
         tk.Label(self, text="Welcome", font=("Helvetica", 20), bg="#f0f0f0").pack(pady=20)
 
-        # Dropdown to select COM port dynamically
-        tk.Label(self, text="Select COM Port:", bg="#f0f0f0", font=('Helvetica', 12)).pack(pady=10)
-        self.com_port_var = tk.StringVar(self)
-        self.com_ports_dropdown = ttk.Combobox(self, textvariable=self.com_port_var, state="readonly")
-        self.com_ports_dropdown.pack(pady=10)
-        self.update_com_ports_dropdown()
-
         ttk.Button(self, text="Signup", command=lambda: controller.show_frame("SignupScreen")).pack(pady=10)
         ttk.Button(self, text="Signin", command=lambda: controller.show_frame("SigninScreen")).pack(pady=10)
         ttk.Button(self, text="Fingerprint Match", command=lambda: controller.show_frame("FingerprintMatchScreen")).pack(pady=10)
         ttk.Button(self, text="Logout", command=lambda: controller.show_frame("LogoutScreen")).pack(pady=10)
-
-    def update_com_ports_dropdown(self):
-        ports = serial.tools.list_ports.comports()
-        com_ports = [port.device for port in ports]
-        self.com_ports_dropdown["values"] = com_ports
-        if com_ports:
-            self.com_ports_dropdown.current(0)  # Select the first port by default
 
 class SignupScreen(tk.Frame):
     def __init__(self, parent, controller):
@@ -313,7 +294,7 @@ class SignupScreen(tk.Frame):
         address_entry.grid(row=4, column=1, padx=10, pady=5)
 
         tk.Button(self, text="Save Fingerprint", font=('Helvetica', 12), command=lambda: save_fingerprint_image(
-            username_entry, password_entry, droneid_entry, pilotid_entry, address_entry, self.com_port_var.get())).pack(pady=10)
+            username_entry, password_entry, droneid_entry, pilotid_entry, address_entry)).pack(pady=10)
         
         tk.Button(self, text="Close", font=('Helvetica', 12), command=lambda: controller.show_frame("HomeScreen")).pack(pady=10)
 
